@@ -175,7 +175,10 @@ export class YandexMessengerChannel implements Channel {
         throw new Error(`API error ${res.status}: ${errText}`);
       }
 
-      logger.info({ jid, length: text.length }, 'Yandex messenger message sent');
+      logger.info(
+        { jid, length: text.length },
+        'Yandex messenger message sent',
+      );
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Yandex messenger message');
     }

@@ -22,7 +22,7 @@ describe('YandexMessengerChannel', () => {
       }),
     };
     channel = new YandexMessengerChannel('dummy-token', opts);
-    
+
     // Mock fetch globally
     vi.stubGlobal('fetch', vi.fn());
   });
@@ -73,10 +73,12 @@ describe('YandexMessengerChannel', () => {
 
     // To prevent infinite loop in tests, we can abort the controller early after the first fetch
     // the safest way is to mock fetch to throw AbortError on the second call
-    fetchMock.mockRejectedValueOnce(Object.assign(new Error('AbortError'), { name: 'AbortError' }));
+    fetchMock.mockRejectedValueOnce(
+      Object.assign(new Error('AbortError'), { name: 'AbortError' }),
+    );
 
     await channel.connect();
-    
+
     // Wait for async poll in background
     await vi.waitFor(() => {
       expect(opts.onChatMetadata).toHaveBeenCalled();
@@ -87,7 +89,7 @@ describe('YandexMessengerChannel', () => {
       expect.any(String),
       'User One',
       'yandex-messenger',
-      false
+      false,
     );
 
     expect(opts.onMessage).toHaveBeenCalledWith('ya:12345', {
@@ -111,7 +113,11 @@ describe('YandexMessengerChannel', () => {
             update_id: 2,
             message: {
               message_id: 'msg-2',
-              chat: { id: 'unregistered-999', type: 'group', title: 'Unknown Group' },
+              chat: {
+                id: 'unregistered-999',
+                type: 'group',
+                title: 'Unknown Group',
+              },
               from: { login: 'user2', name: 'User Two' },
               text: 'Who are you?',
             },
@@ -119,7 +125,9 @@ describe('YandexMessengerChannel', () => {
         ],
       }),
     } as any);
-    fetchMock.mockRejectedValueOnce(Object.assign(new Error('AbortError'), { name: 'AbortError' }));
+    fetchMock.mockRejectedValueOnce(
+      Object.assign(new Error('AbortError'), { name: 'AbortError' }),
+    );
 
     await channel.connect();
 
@@ -134,7 +142,7 @@ describe('YandexMessengerChannel', () => {
       expect.any(String),
       'Unknown Group',
       'yandex-messenger',
-      true
+      true,
     );
 
     // But onMessage should NOT be called
@@ -164,7 +172,7 @@ describe('YandexMessengerChannel', () => {
           chat_id: '12345',
           text: 'Response from bot',
         }),
-      }
+      },
     );
   });
 
