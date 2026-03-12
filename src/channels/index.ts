@@ -10,3 +10,6 @@
 // telegram
 
 // whatsapp
+
+// yandex-messenger
+import './yandex-messenger.js';
