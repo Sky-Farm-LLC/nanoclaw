@@ -387,7 +387,9 @@ describe('credential-proxy', () => {
       '{}',
     );
 
-    expect(lastUpstreamHeaders['authorization']).toBe('Bearer real-oauth-token');
+    expect(lastUpstreamHeaders['authorization']).toBe(
+      'Bearer real-oauth-token',
+    );
     expect(lastUpstreamHeaders['x-api-key']).toBeUndefined();
   });
 
