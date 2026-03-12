@@ -56,11 +56,12 @@ export class YandexMessengerChannel implements Channel {
 
         if (!res.ok) {
           const text = await res.text();
+          const waitMs = res.status === 429 ? 60000 : 5000;
           logger.error(
-            { status: res.status, text },
+            { status: res.status, text, retryInMs: waitMs },
             'Yandex API error while polling',
           );
-          await new Promise((r) => setTimeout(r, 5000)); // wait before retry
+          await new Promise((r) => setTimeout(r, waitMs));
           continue;
         }
 
@@ -87,28 +88,34 @@ export class YandexMessengerChannel implements Channel {
   }
 
   private handleUpdate(update: any) {
-    // Expected structure typically includes text, chat, from, etc.
-    if (!update.message || !update.message.text) {
+    // Yandex Bot API returns fields at the top level of the update object,
+    // not nested under a "message" key.
+    const msg = update.message ?? update;
+    if (!msg.text) {
       return;
     }
 
-    const msg = update.message;
-    const chatId = msg.chat?.id;
+    const chatId = msg.chat?.id ?? update.chat?.id;
     if (!chatId) return;
 
     const chatJid = `ya:${chatId}`;
-    let content = msg.text;
-    const timestamp = msg.timestamp
-      ? new Date(msg.timestamp * 1000).toISOString()
+    let content = msg.text ?? update.text;
+    const rawTimestamp = msg.timestamp ?? update.timestamp;
+    const timestamp = rawTimestamp
+      ? new Date(rawTimestamp * 1000).toISOString()
       : new Date().toISOString();
 
-    const sender = msg.from?.login || msg.from?.id?.toString() || 'unknown';
-    const senderName = msg.from?.name || sender;
-    const msgId = msg.message_id?.toString() || Math.random().toString();
+    const from = msg.from ?? update.from;
+    const sender = from?.login || from?.id?.toString() || 'unknown';
+    const senderName = from?.display_name || from?.name || sender;
+    const msgId =
+      (msg.message_id ?? update.message_id)?.toString() ||
+      Math.random().toString();
 
     // Check if group
-    const isGroup = msg.chat?.type === 'group' || msg.chat?.type === 'channel';
-    const chatName = !isGroup ? senderName : msg.chat?.title || chatJid;
+    const chat = msg.chat ?? update.chat;
+    const isGroup = chat?.type === 'group' || chat?.type === 'channel';
+    const chatName = !isGroup ? senderName : chat?.title || chatJid;
 
     // Store chat metadata
     this.opts.onChatMetadata(
@@ -140,7 +147,7 @@ export class YandexMessengerChannel implements Channel {
     });
 
     logger.info(
-      { chatJid, chatName, sender: senderName },
+      { chatJid, chatName, sender: senderName, content },
       'Yandex Messenger message stored',
     );
   }
