@@ -72,6 +72,33 @@ function writeKimiMcpConfig(servers: Record<string, McpServerConfig>): void {
   }
 }
 
+/**
+ * Bridge the group's composed instructions into Kimi. Claude/OpenCode read
+ * `CLAUDE.md` (+ `CLAUDE.local.md` memory) from the workspace natively; Kimi
+ * instead reads `$KIMI_CODE_HOME/AGENTS.md`. So we mirror those files into
+ * AGENTS.md before each query — without it Kimi loses all per-group context
+ * (skills, integrations like the Yandex Tracker gateway, memory conventions).
+ */
+function writeKimiAgentsDoc(cwd: string): void {
+  const sections: string[] = [];
+  for (const name of ['CLAUDE.md', 'CLAUDE.local.md']) {
+    try {
+      const content = fs.readFileSync(path.join(cwd, name), 'utf8').trim();
+      if (content) sections.push(content);
+    } catch {
+      /* file not present — skip */
+    }
+  }
+  if (sections.length === 0) return;
+  const home = process.env.KIMI_CODE_HOME || path.join(os.homedir(), '.kimi-code');
+  try {
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(path.join(home, 'AGENTS.md'), sections.join('\n\n---\n\n') + '\n');
+  } catch (err) {
+    console.error(`[kimi] failed to write AGENTS.md: ${(err as Error).message}`);
+  }
+}
+
 function killProcess(proc: ChildProcess): void {
   if (proc.exitCode !== null || proc.signalCode !== null) return;
   try {
@@ -247,6 +274,7 @@ export class KimiProvider implements AgentProvider {
 
     async function* gen(): AsyncGenerator<ProviderEvent> {
       writeKimiMcpConfig(mcpServers);
+      writeKimiAgentsDoc(cwd);
       try {
         while (!aborted) {
           while (pending.length === 0 && !ended && !aborted) {

@@ -39,9 +39,10 @@ function mergeNoProxy(current: string | undefined, additions: string): string {
  * (OAuth tokens), and `device_id` — so we copy everything except runtime noise
  * (`logs/`) and any host-arch binary dir (`bin/`). Never clobbers entries the
  * container has already written on a prior wake (token refresh stays local).
- * `mcp.json` is excluded — the container provider writes that one itself.
+ * `mcp.json` and `AGENTS.md` are excluded — the container provider writes those
+ * itself (from the group's MCP config and composed CLAUDE.md).
  */
-const SEED_SKIP = new Set(['logs', 'bin', 'cache', '.cache', 'tmp', 'mcp.json']);
+const SEED_SKIP = new Set(['logs', 'bin', 'cache', '.cache', 'tmp', 'mcp.json', 'AGENTS.md']);
 
 function seedKimiAuth(srcDir: string, destDir: string): void {
   let entries: fs.Dirent[];
