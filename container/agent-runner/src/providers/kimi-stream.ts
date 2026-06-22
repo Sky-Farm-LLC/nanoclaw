@@ -135,6 +135,21 @@ export function classifyError(message: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Extract the relative paths from a composed CLAUDE.md's `@./path` import lines.
+ * NanoClaw's composed CLAUDE.md is an index of `@./.claude-shared.md` +
+ * `@./.claude-fragments/*.md` imports; Claude resolves them, but Kimi won't, so
+ * the provider inlines each target into AGENTS.md.
+ */
+export function parseClaudeImports(body: string): string[] {
+  const out: string[] = [];
+  for (const line of body.split('\n')) {
+    const m = line.trim().match(/^@(\.\/\S+)$/);
+    if (m) out.push(m[1]);
+  }
+  return out;
+}
+
 /** A stdio MCP server entry as Kimi's `mcp.json` expects it. */
 export interface KimiMcpServer {
   command: string;

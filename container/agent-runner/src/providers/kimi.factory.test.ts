@@ -7,6 +7,7 @@ import {
   classifyError,
   interpretKimiObject,
   LineBuffer,
+  parseClaudeImports,
   RESUME_SENTINEL,
   safeParseJson,
   STALE_SESSION_RE,
@@ -146,6 +147,27 @@ describe('buildMcpConfig', () => {
   it('returns null when there is nothing to write', () => {
     expect(buildMcpConfig({})).toBeNull();
     expect(buildMcpConfig(undefined, { mcpServers: {} })).toBeNull();
+  });
+});
+
+describe('parseClaudeImports', () => {
+  it('extracts @./ import paths from a composed CLAUDE.md index', () => {
+    const body = [
+      '<!-- Composed at spawn — do not edit. -->',
+      '@./.claude-shared.md',
+      '@./.claude-fragments/module-core.md',
+      '@./.claude-fragments/skill-onecli-gateway.md',
+      'some inline note',
+    ].join('\n');
+    expect(parseClaudeImports(body)).toEqual([
+      './.claude-shared.md',
+      './.claude-fragments/module-core.md',
+      './.claude-fragments/skill-onecli-gateway.md',
+    ]);
+  });
+
+  it('returns nothing for a flat CLAUDE.md with no imports', () => {
+    expect(parseClaudeImports('# Just instructions\nno imports here')).toEqual([]);
   });
 });
 

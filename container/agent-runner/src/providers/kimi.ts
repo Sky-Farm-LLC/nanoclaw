@@ -41,6 +41,7 @@ import {
   classifyError,
   interpretKimiObject,
   LineBuffer,
+  parseClaudeImports,
   RESUME_SENTINEL,
   safeParseJson,
   STALE_SESSION_RE,
@@ -75,20 +76,39 @@ function writeKimiMcpConfig(servers: Record<string, McpServerConfig>): void {
 /**
  * Bridge the group's composed instructions into Kimi. Claude/OpenCode read
  * `CLAUDE.md` (+ `CLAUDE.local.md` memory) from the workspace natively; Kimi
- * instead reads `$KIMI_CODE_HOME/AGENTS.md`. So we mirror those files into
- * AGENTS.md before each query — without it Kimi loses all per-group context
- * (skills, integrations like the Yandex Tracker gateway, memory conventions).
+ * instead reads `$KIMI_CODE_HOME/AGENTS.md`. The composed `CLAUDE.md` is an
+ * `@import` index (`.claude-shared.md` → the shared base `/app/CLAUDE.md`, plus
+ * `.claude-fragments/*.md`) that Kimi can't resolve — so we inline each import
+ * target ourselves. Without this Kimi loses all per-group context (skills,
+ * integrations like the Yandex Tracker gateway, memory conventions).
  */
+function readTrimmed(file: string): string | null {
+  try {
+    const content = fs.readFileSync(file, 'utf8').trim(); // follows symlinks
+    return content || null;
+  } catch {
+    return null;
+  }
+}
+
 function writeKimiAgentsDoc(cwd: string): void {
   const sections: string[] = [];
-  for (const name of ['CLAUDE.md', 'CLAUDE.local.md']) {
-    try {
-      const content = fs.readFileSync(path.join(cwd, name), 'utf8').trim();
+  const body = readTrimmed(path.join(cwd, 'CLAUDE.md'));
+  const imports = body ? parseClaudeImports(body) : [];
+  if (imports.length > 0) {
+    // Inline each @import target (resolve relative to the workspace).
+    for (const rel of imports) {
+      const content = readTrimmed(path.resolve(cwd, rel));
       if (content) sections.push(content);
-    } catch {
-      /* file not present — skip */
     }
+  } else if (body) {
+    // No imports — CLAUDE.md is self-contained.
+    sections.push(body);
   }
+  // Per-group memory (Claude auto-loads CLAUDE.local.md).
+  const local = readTrimmed(path.join(cwd, 'CLAUDE.local.md'));
+  if (local) sections.push(local);
+
   if (sections.length === 0) return;
   const home = process.env.KIMI_CODE_HOME || path.join(os.homedir(), '.kimi-code');
   try {
