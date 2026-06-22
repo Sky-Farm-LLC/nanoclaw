@@ -42,7 +42,16 @@ function mergeNoProxy(current: string | undefined, additions: string): string {
  * `mcp.json` and `AGENTS.md` are excluded — the container provider writes those
  * itself (from the group's MCP config and composed CLAUDE.md).
  */
-const SEED_SKIP = new Set(['logs', 'bin', 'cache', '.cache', 'tmp', 'mcp.json', 'AGENTS.md']);
+const SEED_SKIP = new Set([
+  'logs',
+  'bin',
+  'cache',
+  '.cache',
+  'tmp',
+  'mcp.json',
+  'AGENTS.md',
+  '.agents-hash',
+]);
 
 function seedKimiAuth(srcDir: string, destDir: string): void {
   let entries: fs.Dirent[];

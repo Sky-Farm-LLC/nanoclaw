@@ -23,6 +23,7 @@
  * is passed through env. See `src/providers/kimi.ts` on the host side.
  */
 import { spawn, type ChildProcess } from 'child_process';
+import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -91,29 +92,44 @@ function readTrimmed(file: string): string | null {
   }
 }
 
-function writeKimiAgentsDoc(cwd: string): void {
+function kimiHome(): string {
+  return process.env.KIMI_CODE_HOME || path.join(os.homedir(), '.kimi-code');
+}
+
+/** Build the AGENTS.md content from the group's composed CLAUDE.md (resolving
+ * its @imports) plus CLAUDE.local.md memory. Null when there's nothing. */
+export function composeAgentsDoc(cwd: string): string | null {
   const sections: string[] = [];
   const body = readTrimmed(path.join(cwd, 'CLAUDE.md'));
   const imports = body ? parseClaudeImports(body) : [];
   if (imports.length > 0) {
-    // Inline each @import target (resolve relative to the workspace).
     for (const rel of imports) {
       const content = readTrimmed(path.resolve(cwd, rel));
       if (content) sections.push(content);
     }
   } else if (body) {
-    // No imports — CLAUDE.md is self-contained.
-    sections.push(body);
+    sections.push(body); // no imports — CLAUDE.md is self-contained
   }
-  // Per-group memory (Claude auto-loads CLAUDE.local.md).
   const local = readTrimmed(path.join(cwd, 'CLAUDE.local.md'));
   if (local) sections.push(local);
+  if (sections.length === 0) return null;
+  return sections.join('\n\n---\n\n') + '\n';
+}
 
-  if (sections.length === 0) return;
-  const home = process.env.KIMI_CODE_HOME || path.join(os.homedir(), '.kimi-code');
+function sha256(s: string): string {
+  return crypto.createHash('sha256').update(s).digest('hex');
+}
+
+function writeKimiAgentsDoc(cwd: string): void {
+  const doc = composeAgentsDoc(cwd);
+  if (!doc) return;
+  const home = kimiHome();
   try {
     fs.mkdirSync(home, { recursive: true });
-    fs.writeFileSync(path.join(home, 'AGENTS.md'), sections.join('\n\n---\n\n') + '\n');
+    fs.writeFileSync(path.join(home, 'AGENTS.md'), doc);
+    // Record the doc hash so maybeRotateContinuation can detect changes — Kimi
+    // bakes AGENTS.md into a session at creation and never re-reads it on resume.
+    fs.writeFileSync(path.join(home, '.agents-hash'), sha256(doc));
   } catch (err) {
     console.error(`[kimi] failed to write AGENTS.md: ${(err as Error).message}`);
   }
@@ -153,6 +169,27 @@ export class KimiProvider implements AgentProvider {
   isSessionInvalid(err: unknown): boolean {
     const msg = err instanceof Error ? err.message : String(err);
     return STALE_SESSION_RE.test(msg);
+  }
+
+  /**
+   * Kimi loads AGENTS.md (the group instructions) into a session at creation
+   * and never re-reads it on resume. So when the composed CLAUDE.md changes,
+   * resuming the old session would silently keep stale context. Detect that by
+   * comparing the current doc hash against the one recorded at the last write,
+   * and rotate (start a fresh session) when they differ — or when no hash was
+   * recorded yet (older/cleared sessions).
+   */
+  maybeRotateContinuation(_continuation: string, cwd: string): string | null {
+    const doc = composeAgentsDoc(cwd);
+    if (!doc) return null; // no group instructions to compare against
+    let recorded: string | null = null;
+    try {
+      recorded = fs.readFileSync(path.join(kimiHome(), '.agents-hash'), 'utf8').trim();
+    } catch {
+      recorded = null;
+    }
+    if (recorded && recorded === sha256(doc)) return null;
+    return 'group instructions (AGENTS.md) changed — starting a fresh Kimi session';
   }
 
   query(input: QueryInput): AgentQuery {

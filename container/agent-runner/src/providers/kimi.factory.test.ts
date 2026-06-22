@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'bun:test';
+import crypto from 'crypto';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
-import { KimiProvider } from './kimi.js';
+import { KimiProvider, composeAgentsDoc } from './kimi.js';
 import { createProvider } from './factory.js';
 import {
   buildMcpConfig,
@@ -147,6 +151,46 @@ describe('buildMcpConfig', () => {
   it('returns null when there is nothing to write', () => {
     expect(buildMcpConfig({})).toBeNull();
     expect(buildMcpConfig(undefined, { mcpServers: {} })).toBeNull();
+  });
+});
+
+describe('composeAgentsDoc + maybeRotateContinuation', () => {
+  function tmpdir(): string {
+    return fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-test-'));
+  }
+
+  it('inlines resolved CLAUDE.md imports + memory', () => {
+    const cwd = tmpdir();
+    fs.writeFileSync(path.join(cwd, 'CLAUDE.md'), '@./shared.md\n@./frag.md\n');
+    fs.writeFileSync(path.join(cwd, 'shared.md'), 'TRACKER: api.tracker.yandex.net');
+    fs.writeFileSync(path.join(cwd, 'frag.md'), 'FRAGMENT BODY');
+    fs.writeFileSync(path.join(cwd, 'CLAUDE.local.md'), 'MEMORY NOTE');
+    const doc = composeAgentsDoc(cwd)!;
+    expect(doc).toContain('TRACKER: api.tracker.yandex.net');
+    expect(doc).toContain('FRAGMENT BODY');
+    expect(doc).toContain('MEMORY NOTE');
+  });
+
+  it('rotates the session when instructions change, not when they match', () => {
+    const home = tmpdir();
+    const cwd = tmpdir();
+    process.env.KIMI_CODE_HOME = home;
+    fs.writeFileSync(path.join(cwd, 'CLAUDE.md'), 'rule one');
+    const provider = new KimiProvider();
+
+    // No hash recorded yet → rotate.
+    expect(provider.maybeRotateContinuation('sess', cwd)).toBeTruthy();
+
+    // Record the matching hash → no rotation.
+    const doc = composeAgentsDoc(cwd)!;
+    fs.writeFileSync(path.join(home, '.agents-hash'), crypto.createHash('sha256').update(doc).digest('hex'));
+    expect(provider.maybeRotateContinuation('sess', cwd)).toBeNull();
+
+    // Change instructions → hash mismatch → rotate.
+    fs.writeFileSync(path.join(cwd, 'CLAUDE.md'), 'rule two (changed)');
+    expect(provider.maybeRotateContinuation('sess', cwd)).toBeTruthy();
+
+    delete process.env.KIMI_CODE_HOME;
   });
 });
 
