@@ -4,3 +4,5 @@
 
 import './claude.js';
 import './mock.js';
+
+import './kimi.js';
