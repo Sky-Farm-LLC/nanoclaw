@@ -34,10 +34,15 @@ function mergeNoProxy(current: string | undefined, additions: string): string {
 }
 
 /**
- * Seed the per-session config home from the operator's `~/.kimi-code`, copying
- * only top-level auth/config files (never the binary, caches, or sub-dirs) and
- * never clobbering files the container has already written on a prior wake.
+ * Seed the per-session config home from the operator's `~/.kimi-code`. Kimi
+ * stores auth across several entries — `config.toml`, the `credentials/` dir
+ * (OAuth tokens), and `device_id` — so we copy everything except runtime noise
+ * (`logs/`) and any host-arch binary dir (`bin/`). Never clobbers entries the
+ * container has already written on a prior wake (token refresh stays local).
+ * `mcp.json` is excluded — the container provider writes that one itself.
  */
+const SEED_SKIP = new Set(['logs', 'bin', 'cache', '.cache', 'tmp', 'mcp.json']);
+
 function seedKimiAuth(srcDir: string, destDir: string): void {
   let entries: fs.Dirent[];
   try {
@@ -45,14 +50,12 @@ function seedKimiAuth(srcDir: string, destDir: string): void {
   } catch {
     return; // operator has no ~/.kimi-code yet — nothing to seed
   }
-  const AUTH_RE = /\.(json|toml|jwt|key|yaml|yml)$|auth|cred|token|session|login/i;
   for (const entry of entries) {
-    if (!entry.isFile()) continue;
-    if (!AUTH_RE.test(entry.name)) continue;
+    if (SEED_SKIP.has(entry.name)) continue;
     const dest = path.join(destDir, entry.name);
     if (fs.existsSync(dest)) continue;
     try {
-      fs.copyFileSync(path.join(srcDir, entry.name), dest);
+      fs.cpSync(path.join(srcDir, entry.name), dest, { recursive: true });
     } catch {
       /* best effort */
     }

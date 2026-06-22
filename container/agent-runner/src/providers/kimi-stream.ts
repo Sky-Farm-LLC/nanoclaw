@@ -3,12 +3,14 @@
  * output. Kept free of any I/O so they can be unit-tested without spawning the
  * CLI.
  *
- * Kimi's `kimi -p ... --output-format stream-json` mirrors Claude Code's flags,
- * and in practice emits the same newline-delimited JSON shapes:
- *   {"type":"system","subtype":"init","session_id":"..."}
- *   {"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}}
- *   {"type":"result","subtype":"success","result":"...","session_id":"...","is_error":false}
- * The extraction below targets that schema but degrades gracefully: anything it
+ * Kimi's `kimi -p ... --output-format stream-json` emits newline-delimited,
+ * role-tagged JSON objects (verified against CLI 0.19.0):
+ *   {"role":"assistant","content":"<answer text>"}
+ *   {"role":"assistant","tool_calls":[{"type":"function","function":{"name",...}}]}
+ *   {"role":"tool","tool_call_id":"...","content":"<tool output>"}
+ *   {"role":"meta","type":"session.resume_hint","session_id":"session_<uuid>",...}
+ * There is no terminal `result` event — the LAST content-bearing assistant
+ * message is the answer. The extraction below degrades gracefully: anything it
  * doesn't recognize yields an empty signal (the caller still counts the line as
  * liveness activity). Refine `interpretKimiObject` against captured output if a
  * future Kimi release changes the shape.
@@ -70,20 +72,19 @@ export function safeParseJson(line: string): unknown {
   }
 }
 
-function extractAssistantText(message: unknown): string {
-  if (!message || typeof message !== 'object') return '';
-  const content = (message as { content?: unknown }).content;
+/** Text from an assistant `content` field, which may be a plain string or an
+ * array of rich blocks. */
+function extractText(content: unknown): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
     return content
-      .filter(
-        (part): part is { type: string; text: string } =>
-          !!part &&
-          typeof part === 'object' &&
-          (part as { type?: unknown }).type === 'text' &&
-          typeof (part as { text?: unknown }).text === 'string',
-      )
-      .map((part) => part.text)
+      .map((part) => {
+        if (typeof part === 'string') return part;
+        if (part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string') {
+          return (part as { text: string }).text;
+        }
+        return '';
+      })
       .join('');
   }
   return '';
@@ -105,44 +106,25 @@ export function interpretKimiObject(obj: unknown): KimiSignal {
   if (!obj || typeof obj !== 'object') return sig;
   const o = obj as Record<string, unknown>;
 
+  // Session id rides on the meta `session.resume_hint` line.
   const sid = o.session_id ?? o.sessionId ?? o.session;
   if (typeof sid === 'string' && sid) sig.sessionId = sid;
 
-  switch (o.type) {
-    case 'assistant': {
-      const text = extractAssistantText(o.message ?? o);
-      if (text) sig.delta = text;
-      break;
-    }
-    case 'result': {
-      sig.final = typeof o.result === 'string' ? o.result : null;
-      const errored =
-        o.is_error === true ||
-        (typeof o.subtype === 'string' && /error/i.test(o.subtype));
-      if (errored) {
-        sig.finalIsError = true;
-        sig.errorMessage = typeof o.result === 'string' ? o.result : stringifyError(o);
-      }
-      break;
-    }
-    case 'error': {
-      sig.errorMessage = stringifyError(o);
-      break;
-    }
-    default: {
-      // Streaming-delta fallbacks for other CLI shapes.
-      const delta = o.delta;
-      if (delta && typeof delta === 'object' && typeof (delta as { text?: unknown }).text === 'string') {
-        sig.delta = (delta as { text: string }).text;
-      } else if (
-        typeof o.text === 'string' &&
-        (o.type === 'text' || o.type === 'content_block_delta')
-      ) {
-        sig.delta = o.text;
-      }
-      break;
-    }
+  // Error lines (exact shape undocumented — match defensively).
+  if (o.role === 'error' || o.type === 'error' || o.error) {
+    sig.errorMessage = stringifyError(o);
+    return sig;
   }
+
+  // Only assistant messages carry answer text. A content-bearing assistant
+  // message is an answer; since there's no terminal result event, expose it as
+  // the (overwritable) final — the last one wins. Tool-call-only assistant
+  // messages and `tool`/`meta`/`user` lines contribute liveness only.
+  if (o.role === 'assistant') {
+    const text = extractText(o.content);
+    if (text) sig.final = text;
+  }
+
   return sig;
 }
 

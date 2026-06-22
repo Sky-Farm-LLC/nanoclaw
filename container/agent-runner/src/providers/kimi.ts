@@ -4,13 +4,14 @@
  * Drives Moonshot AI's `kimi` CLI (npm: `@moonshot-ai/kimi-code`) in headless
  * mode, one subprocess per turn:
  *
- *   kimi -p "<prompt>" --output-format stream-json --yolo [--session <id> | --continue]
+ *   kimi -p "<prompt>" --output-format stream-json [--session <id> | --continue]
  *
- * `--yolo` auto-approves tool calls (NanoClaw's container isolation + OneCLI
- * allow-list are the security boundary). stream-json gives us line-by-line
- * liveness — every stdout line is reported as an `activity` event so the
- * poll-loop's idle timer stays honest during long tool runs, the failure mode
- * that buffered text output would cause.
+ * `-p` (print) mode auto-executes tool calls — the `--yolo`/`--auto` approval
+ * flags are actually rejected when combined with `-p`, and NanoClaw's container
+ * isolation + OneCLI allow-list are the security boundary anyway. stream-json
+ * gives us line-by-line liveness — every stdout line is reported as an
+ * `activity` event so the poll-loop's idle timer stays honest during long tool
+ * runs, the failure mode that buffered text output would cause.
  *
  * Continuation: Kimi keeps conversation state in its config home
  * (`KIMI_CODE_HOME`), which the host mounts per session — so resuming is safe.
@@ -136,7 +137,7 @@ export class KimiProvider implements AgentProvider {
     };
 
     async function* runTurn(text: string): AsyncGenerator<ProviderEvent> {
-      const args = ['-p', text, '--output-format', 'stream-json', '--yolo', ...resumeArgs()];
+      const args = ['-p', text, '--output-format', 'stream-json', ...resumeArgs()];
       const proc = spawn(bin, args, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
       activeProc = proc;
 

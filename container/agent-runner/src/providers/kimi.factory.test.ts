@@ -47,43 +47,71 @@ describe('LineBuffer', () => {
   });
 });
 
-describe('interpretKimiObject', () => {
-  it('extracts the session id from a system init event', () => {
-    const sig = interpretKimiObject({ type: 'system', subtype: 'init', session_id: 'sess_123' });
-    expect(sig.sessionId).toBe('sess_123');
-  });
-
-  it('accumulates assistant message text as a delta', () => {
+describe('interpretKimiObject (CLI 0.19.0 role-based schema)', () => {
+  it('extracts the session id from the meta resume_hint line', () => {
     const sig = interpretKimiObject({
-      type: 'assistant',
-      message: { content: [{ type: 'text', text: 'hello ' }, { type: 'tool_use' }, { type: 'text', text: 'world' }] },
+      role: 'meta',
+      type: 'session.resume_hint',
+      session_id: 'session_2d952f70-1178-413b-aba3-2275f2aa472a',
+      command: 'kimi -r session_2d952f70-1178-413b-aba3-2275f2aa472a',
     });
-    expect(sig.delta).toBe('hello world');
+    expect(sig.sessionId).toBe('session_2d952f70-1178-413b-aba3-2275f2aa472a');
+    expect(sig.final).toBeUndefined();
   });
 
-  it('captures the terminal result text', () => {
+  it('reads the answer from an assistant content message', () => {
+    expect(interpretKimiObject({ role: 'assistant', content: 'pong' }).final).toBe('pong');
+  });
+
+  it('joins array content blocks', () => {
     const sig = interpretKimiObject({
-      type: 'result',
-      subtype: 'success',
-      result: 'final answer',
-      session_id: 'sess_123',
-      is_error: false,
+      role: 'assistant',
+      content: ['hello ', { text: 'world' }, { type: 'image' }],
     });
-    expect(sig.final).toBe('final answer');
-    expect(sig.finalIsError).toBeUndefined();
-    expect(sig.sessionId).toBe('sess_123');
+    expect(sig.final).toBe('hello world');
   });
 
-  it('marks an errored result', () => {
-    const sig = interpretKimiObject({ type: 'result', subtype: 'error_max_turns', result: 'boom', is_error: true });
-    expect(sig.finalIsError).toBe(true);
-    expect(sig.errorMessage).toBe('boom');
+  it('treats a tool-call assistant message as liveness only (no answer)', () => {
+    const sig = interpretKimiObject({
+      role: 'assistant',
+      tool_calls: [{ type: 'function', id: 'tool_1', function: { name: 'Bash', arguments: '{}' } }],
+    });
+    expect(sig.final).toBeUndefined();
+  });
+
+  it('does not mistake tool output for the answer', () => {
+    expect(interpretKimiObject({ role: 'tool', tool_call_id: 'tool_1', content: 'KIMI_TOOL_OK\n' }).final).toBeUndefined();
+  });
+
+  it('captures an error line', () => {
+    expect(interpretKimiObject({ role: 'error', error: 'boom' }).errorMessage).toBe('boom');
   });
 
   it('returns an empty signal for unrecognized lines', () => {
-    expect(interpretKimiObject({ type: 'user' })).toEqual({});
+    expect(interpretKimiObject({ role: 'user', content: 'hi' })).toEqual({});
     expect(interpretKimiObject(null)).toEqual({});
     expect(interpretKimiObject(safeParseJson('not json'))).toEqual({});
+  });
+});
+
+describe('parsing a captured stream-json transcript', () => {
+  it('yields the final answer and session id from a real tool-using turn', () => {
+    const transcript = [
+      '{"role":"assistant","tool_calls":[{"type":"function","id":"tool_KP","function":{"name":"Bash","arguments":"{\\"command\\":\\"echo KIMI_TOOL_OK\\"}"}}]}',
+      '{"role":"tool","tool_call_id":"tool_KP","content":"KIMI_TOOL_OK\\n"}',
+      '{"role":"assistant","content":"KIMI_TOOL_OK"}',
+      '{"role":"meta","type":"session.resume_hint","session_id":"session_310e063e","command":"kimi -r session_310e063e"}',
+    ];
+    const lb = new LineBuffer();
+    let final: string | null | undefined;
+    let sessionId: string | undefined;
+    for (const line of lb.push(transcript.join('\n') + '\n')) {
+      const sig = interpretKimiObject(safeParseJson(line));
+      if (sig.sessionId) sessionId = sig.sessionId;
+      if (sig.final !== undefined) final = sig.final;
+    }
+    expect(final).toBe('KIMI_TOOL_OK');
+    expect(sessionId).toBe('session_310e063e');
   });
 });
 
