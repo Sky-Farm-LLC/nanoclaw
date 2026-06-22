@@ -152,3 +152,49 @@ export function classifyError(message: string): string | undefined {
   if (/session|conversation|thread/i.test(message)) return 'stale-session';
   return undefined;
 }
+
+/** A stdio MCP server entry as Kimi's `mcp.json` expects it. */
+export interface KimiMcpServer {
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+}
+
+interface McpServerInput {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+/**
+ * Build the contents of Kimi's `mcp.json` from the runner's MCP server map.
+ * Merges NanoClaw's servers over any `existing` file content (preserving
+ * operator-added servers and other top-level keys). Returns `null` when there's
+ * nothing to write, so the caller leaves any existing file untouched.
+ */
+export function buildMcpConfig(
+  servers: Record<string, McpServerInput> | undefined,
+  existing?: unknown,
+): Record<string, unknown> | null {
+  const existingObj =
+    existing && typeof existing === 'object' && !Array.isArray(existing)
+      ? (existing as Record<string, unknown>)
+      : {};
+  const existingServers =
+    existingObj.mcpServers && typeof existingObj.mcpServers === 'object'
+      ? (existingObj.mcpServers as Record<string, KimiMcpServer>)
+      : {};
+
+  const merged: Record<string, KimiMcpServer> = { ...existingServers };
+  for (const [name, cfg] of Object.entries(servers ?? {})) {
+    if (!cfg?.command) continue;
+    merged[name] = {
+      command: cfg.command,
+      args: cfg.args ?? [],
+      ...(cfg.env && Object.keys(cfg.env).length ? { env: cfg.env } : {}),
+    };
+  }
+
+  if (Object.keys(merged).length === 0) return null;
+  return { ...existingObj, mcpServers: merged };
+}

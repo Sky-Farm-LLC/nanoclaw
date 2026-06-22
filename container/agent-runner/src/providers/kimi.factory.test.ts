@@ -3,6 +3,7 @@ import { describe, it, expect } from 'bun:test';
 import { KimiProvider } from './kimi.js';
 import { createProvider } from './factory.js';
 import {
+  buildMcpConfig,
   classifyError,
   interpretKimiObject,
   LineBuffer,
@@ -83,6 +84,40 @@ describe('interpretKimiObject', () => {
     expect(interpretKimiObject({ type: 'user' })).toEqual({});
     expect(interpretKimiObject(null)).toEqual({});
     expect(interpretKimiObject(safeParseJson('not json'))).toEqual({});
+  });
+});
+
+describe('buildMcpConfig', () => {
+  it('maps runner servers into Kimi mcp.json shape', () => {
+    const config = buildMcpConfig({
+      ncl: { command: 'bun', args: ['/app/src/cli/ncl.ts'], env: {} },
+      fetch: { command: 'npx', args: ['-y', 'mcp-fetch'], env: { TOKEN: 'x' } },
+    });
+    expect(config).toEqual({
+      mcpServers: {
+        ncl: { command: 'bun', args: ['/app/src/cli/ncl.ts'] },
+        fetch: { command: 'npx', args: ['-y', 'mcp-fetch'], env: { TOKEN: 'x' } },
+      },
+    });
+  });
+
+  it('merges over existing file content, preserving operator servers and top-level keys', () => {
+    const config = buildMcpConfig(
+      { ncl: { command: 'bun', args: [] } },
+      { version: 1, mcpServers: { custom: { command: 'mine', args: [] } } },
+    );
+    expect(config).toEqual({
+      version: 1,
+      mcpServers: {
+        custom: { command: 'mine', args: [] },
+        ncl: { command: 'bun', args: [] },
+      },
+    });
+  });
+
+  it('returns null when there is nothing to write', () => {
+    expect(buildMcpConfig({})).toBeNull();
+    expect(buildMcpConfig(undefined, { mcpServers: {} })).toBeNull();
   });
 });
 

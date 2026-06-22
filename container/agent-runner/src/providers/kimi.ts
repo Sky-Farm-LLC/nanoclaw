@@ -22,16 +22,21 @@
  * is passed through env. See `src/providers/kimi.ts` on the host side.
  */
 import { spawn, type ChildProcess } from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 import { registerProvider } from './provider-registry.js';
 import type {
   AgentProvider,
   AgentQuery,
+  McpServerConfig,
   ProviderEvent,
   ProviderOptions,
   QueryInput,
 } from './types.js';
 import {
+  buildMcpConfig,
   classifyError,
   interpretKimiObject,
   LineBuffer,
@@ -41,6 +46,30 @@ import {
 } from './kimi-stream.js';
 
 const TURN_TIMEOUT_MS = Number(process.env.KIMI_IDLE_TIMEOUT_MS) || 10 * 60 * 1000;
+
+/**
+ * Wire the runner's MCP servers into Kimi by writing `$KIMI_CODE_HOME/mcp.json`
+ * (the user-level config Kimi reads). Merges over any existing file so
+ * operator-added servers survive. No-op when there are no servers to add.
+ */
+function writeKimiMcpConfig(servers: Record<string, McpServerConfig>): void {
+  const home = process.env.KIMI_CODE_HOME || path.join(os.homedir(), '.kimi-code');
+  const file = path.join(home, 'mcp.json');
+  let existing: unknown;
+  try {
+    existing = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    existing = undefined;
+  }
+  const config = buildMcpConfig(servers, existing);
+  if (!config) return;
+  try {
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
+  } catch (err) {
+    console.error(`[kimi] failed to write mcp.json: ${(err as Error).message}`);
+  }
+}
 
 function killProcess(proc: ChildProcess): void {
   if (proc.exitCode !== null || proc.signalCode !== null) return;
@@ -65,10 +94,12 @@ export class KimiProvider implements AgentProvider {
   // auto-selects the backend model, so we don't pass a model flag in v1.
   private readonly model?: string;
   private readonly bin: string;
+  private readonly mcpServers: Record<string, McpServerConfig>;
 
   constructor(options: ProviderOptions = {}) {
     this.model = options.model;
     this.bin = process.env.KIMI_BIN || 'kimi';
+    this.mcpServers = options.mcpServers ?? {};
   }
 
   isSessionInvalid(err: unknown): boolean {
@@ -79,6 +110,7 @@ export class KimiProvider implements AgentProvider {
   query(input: QueryInput): AgentQuery {
     const bin = this.bin;
     const cwd = input.cwd;
+    const mcpServers = this.mcpServers;
     const instructions = input.systemContext?.instructions;
 
     const pending: string[] = [
@@ -213,6 +245,7 @@ export class KimiProvider implements AgentProvider {
     }
 
     async function* gen(): AsyncGenerator<ProviderEvent> {
+      writeKimiMcpConfig(mcpServers);
       try {
         while (!aborted) {
           while (pending.length === 0 && !ended && !aborted) {
